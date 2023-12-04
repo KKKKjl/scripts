@@ -1,38 +1,38 @@
 #!/bin/bash
 
-function inspect_docker_container() {
+function update_rule() {
     local action="$1"
     local cids=("${@:2}")
 
     for cid in "${cids[@]}"; do
         read -r name < <(docker inspect $cid --format='{{.Name}}')
-        mapfile -t PORT_PROTO_LIST < <(docker inspect $cid --format='{{range $p, $conf := .NetworkSettings.Ports}}{{with $conf}}{{$p}}{{"\n"}}{{end}}{{end}}' | sed '/^[[:blank:]]*$/d')
+        mapfile -t port_proto_list < <(docker inspect $cid --format='{{range $p, $conf := .NetworkSettings.Ports}}{{with $conf}}{{$p}}{{"\n"}}{{end}}{{end}}' | sed '/^[[:blank:]]*$/d')
 
-        for PORT_PROTO in "${PORT_PROTO_LIST[@]}"; do
-            if [[ "$action" = "nginx" ]] && [[ "${PORT_PROTO}" = */tcp ]]; then
-                mkdir -p /etc/nginx/conf.d/ && update_nginx_rule "${name#*/}" "${PORT_PROTO%/*}"
-            fi
-
-            if [[ "$action" = "ufw" ]]; then
-                update_ufw_rule "${name#*/}" "${PORT_PROTO}"
-            fi
+        for port_proto in "${port_proto_list[@]}"; do
+            "update_${action}_rule" "${name#*/}" "${port_proto}"
         done
     done
 }
 
 function update_ufw_rule() {
     local name="$1"
-    local port="$2"
+    local port_proto="$2"
 
-    ufw-docker allow $name $port
-    echo "Update ufw rules for $name $port"
+    ufw-docker allow $name $port_proto
+    echo "Update ufw rules for $name $port_proto"
 }
 
 function update_nginx_rule() {
     local name="$1"
-    local port="$2"
+    local port_proto="$2"
 
-    nginx_conf="/etc/nginx/conf.d/${name}.conf"
+    # skip udp ports
+    if [[ "${port_proto}" = */udp ]]; then
+        return
+    fi
+
+    local port="${port_proto%/*}"
+    local nginx_conf="/etc/nginx/conf.d/${name}.conf"
 
     echo "
 server {
@@ -75,14 +75,6 @@ function reload_nginx() {
     fi
 }
 
-function cleanup_nginx() {
-    local nginx_cid=$(docker ps -q -f name=nginx)
-
-    [[ -z "$nginx_cid" ]] && echo "Nginx container not found" && exit 1
-    rm -rf /etc/nginx/conf.d/*
-    docker exec -it $nginx_cid nginx -s reload
-}
-
 # main
 
 action="${1:-help}"
@@ -96,11 +88,10 @@ case "$action" in
     ;&
 "nginx" | "ufw")
     cids=($(docker ps -q -f "label=${1}.expose=true"))
-    inspect_docker_container "${1}" "${cids[@]}"
 
-    if [[ "${1}" = "nginx" ]]; then
-        reload_nginx
-    fi
+    "update_rule" "${1}" "${cids[@]}" && {
+        [[ "$1" = "nginx" ]] && reload_nginx
+    }
     ;;
 *)
     echo "Unknown action: $action"
