@@ -43,10 +43,12 @@ server {
     ssl_certificate_key /etc/nginx/conf.d/ssl/key.pem;
 
     location / {
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header Host \$http_host;
         proxy_set_header Range \$http_range;
         proxy_set_header If-Range \$http_if_range;
         proxy_redirect off;
